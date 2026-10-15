@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="lv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cyber Tower Defense — TOP 10</title>
+  <style>
+    body { margin: 0; min-height: 100vh; background: #17181b; color: #e8e9ea; font: 18px Arial, sans-serif; }
+    main { width: min(720px, calc(100% - 40px)); margin: 40px auto; border-radius: 12px; padding: 28px; background: #24262b; }
+    h1 { margin-top: 0; color: #f0f1f2; text-align: center; }
+    #status { text-align: center; color: #b8bbc0; }
+    table { width: 100%; border-collapse: collapse; margin-top: 22px; }
+    th, td { padding: 12px; border-bottom: 1px solid #3d4148; text-align: left; }
+    th { color: #d7dade; } td:first-child { width: 70px; color: #c7c9cc; font-weight: bold; }
+    a { display: inline-block; margin-top: 22px; color: #f7f7f7; background: #4b5563; padding: 12px 16px; border-radius: 7px; text-decoration: none; font-weight: bold; }
+    a:hover { background: #606b78; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Infinite Mode — TOP 10</h1>
+    <p id="status">Ielādē rekordus...</p>
+    <table id="board" hidden>
+      <thead><tr><th>Vieta</th><th>Spēlētājs</th><th>Labākais vilnis</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <a href="/rules">Noteikumi</a>
+  </main>
+  <script>
+    const status = document.getElementById('status');
+    const table = document.getElementById('board');
+    const body = table.querySelector('tbody');
+
+    fetch('/scores/top')
+      .then(response => {
+        if (!response.ok) throw new Error('Servera kļūda');
+        return response.json();
+      })
+      .then(scores => {
+        const top10 = scores.slice(0, 10);
+        if (top10.length === 0) {
+          status.textContent = 'Vēl nav neviena Infinite Mode rekorda.';
+          return;
+        }
+        top10.forEach((entry, index) => {
+          const row = document.createElement('tr');
+          row.innerHTML = `<td>${index + 1}</td><td></td><td>${entry.wave}</td>`;
+          row.children[1].textContent = entry.player;
+          body.appendChild(row);
+        });
+        status.textContent = `Rāda ${top10.length} labākos Infinite Mode rekordus`;
+        table.hidden = false;
+      })
+      .catch(() => {
+        status.textContent = 'Atver spēli no jauna un tad pārlādē šo lapu.';
+      });
+  </script>
+</body>
+</html>

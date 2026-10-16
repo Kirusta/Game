@@ -6,6 +6,8 @@ Tas izmanto tikai Python standarta bibliotēku, tāpēc nav jāinstalē papildin
 import json
 import secrets
 import sqlite3
+import hashlib
+import hmac
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -31,6 +33,20 @@ def database():
         "infinite_unlocked INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(player) REFERENCES players(name))"
     )
     return conn
+
+
+def password_hash(password, salt=None):
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), 180000).hex()
+    return f"{salt}${digest}"
+
+
+def password_matches(password, stored_hash):
+    try:
+        salt, _ = stored_hash.split("$", 1)
+        return hmac.compare_digest(password_hash(password, salt), stored_hash)
+    except (ValueError, TypeError):
+        return False
 
 
 class GameServer(SimpleHTTPRequestHandler):
@@ -100,15 +116,23 @@ class GameServer(SimpleHTTPRequestHandler):
         item = self.read_json()
         if not isinstance(item, dict):
             return self.json_response({"detail": "Nederīgi dati"}, HTTPStatus.BAD_REQUEST)
-        if path == "/login-name":
+        if path == "/login":
             name = str(item.get("name", "")).strip()
+            password = str(item.get("password", ""))
             if not 2 <= len(name) <= 16:
                 return self.json_response({"detail": "Vārdam jābūt 2–16 simboliem"}, HTTPStatus.UNPROCESSABLE_ENTITY)
+            if len(password) < 4:
+                return self.json_response({"detail": "Parolei vajag vismaz 4 simbolus"}, HTTPStatus.UNPROCESSABLE_ENTITY)
             token = secrets.token_hex(16)
             with database() as conn:
-                exists = conn.execute("SELECT 1 FROM players WHERE name = ?", (name,)).fetchone()
-                if not exists:
-                    conn.execute("INSERT INTO players (name, password_hash) VALUES (?, ?)", (name, ""))
+                row = conn.execute("SELECT password_hash FROM players WHERE name = ?", (name,)).fetchone()
+                if row is None:
+                    conn.execute("INSERT INTO players (name, password_hash) VALUES (?, ?)", (name, password_hash(password)))
+                elif not row[0]:
+                    # Iepriekšējie vārda-only profili tiek aizsargāti ar pirmo paroli.
+                    conn.execute("UPDATE players SET password_hash = ? WHERE name = ?", (password_hash(password), name))
+                elif not password_matches(password, row[0]):
+                    return self.json_response({"detail": "Nepareiza parole"}, HTTPStatus.UNAUTHORIZED)
                 conn.execute("UPDATE players SET token = ? WHERE name = ?", (token, name))
             return self.json_response({"token": token, "name": name})
         if path == "/scores":

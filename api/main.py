@@ -110,18 +110,11 @@ def login(user: UserIn):
 
 @app.post("/login-name")
 def login_with_name(user: UsernameIn):
-    """Vienkāršā spēles pieslēgšanās: viens vārds atjauno šī vārda progresu."""
-    name = user.name.strip()
-    with get_connection() as conn:
-        exists = conn.execute("SELECT 1 FROM players WHERE name = ?", (name,)).fetchone()
-        if exists is None:
-            conn.execute(
-                "INSERT INTO players (name, password_hash) VALUES (?, ?)",
-                (name, ""),
-            )
-        token = secrets.token_hex(16)
-        conn.execute("UPDATE players SET token = ? WHERE name = ?", (token, name))
-    return {"token": token, "name": name}
+    # Vecais paroles-neprasošais ceļš ir atslēgts.
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Pieslēgšanās bez paroles vairs nav pieejama.",
+    )
 
 
 @app.get("/progress/me")

@@ -2,6 +2,8 @@ import math
 import os
 import random
 import sqlite3
+import hashlib
+import hmac
 import socket
 import subprocess
 import sys
@@ -44,15 +46,17 @@ MAP_IMAGES = {
 }
 
 # Krāsas
-BG_COLOR = (15, 15, 25)
-PATH_COLOR = (40, 40, 60)
+BG_COLOR = (7, 10, 20)
+PATH_COLOR = (27, 32, 54)
 RED = (255, 50, 50)
-BOSS_COLOR = (255, 0, 128)
-GREEN = (50, 255, 100)
-YELLOW = (255, 220, 0)
-CYAN = (0, 255, 200)
-WHITE = (255, 255, 255)
-DARK_GRAY = (30, 30, 45)
+BOSS_COLOR = (255, 40, 150)
+GREEN = (80, 255, 170)
+YELLOW = (255, 205, 65)
+CYAN = (30, 220, 255)
+WHITE = (225, 240, 255)
+DARK_GRAY = (17, 24, 43)
+PANEL_COLOR = (12, 18, 34)
+NEON_PINK = (255, 55, 165)
 
 # Spēles stāvokļi  pirms izvēlnes spēlētājs var ievadīt vārdu.
 game_state = "NAME_ENTRY"
@@ -71,14 +75,16 @@ leaderboard = []
 leaderboard_page = 0
 player_name = "Spēlētājs"
 name_buffer = ""
+password_buffer = ""
 api_token = None
 local_database_mode = False
 account_name_buffer = ""
+account_password_buffer = ""
 account_field = "name"
 account_message = ""
 
 # Spēles mainīgie
-lives = 5
+lives = 3
 money = 250
 selected_tower_type = 1
 current_level = 1
@@ -93,22 +99,22 @@ GAME_MODES = {
 }
 
 UNIT_STATS = {
-    1: {"name": "Zilais trooperis", "limit": 3, "cost": 75,
+    1: {"name": "Blue Cyborg", "limit": 3, "cost": 75,
         "levels": [(12, 155, 33, 0), (25, 175, 24, 90), (52, 205, 17, 180)]},
-    2: {"name": "Sarkanais bise", "limit": 2, "cost": 110,
+    2: {"name": "Red Cyborg", "limit": 2, "cost": 110,
         "levels": [(7, 95, 57, 0), (10, 110, 48, 120), (15, 125, 39, 240)]},
-    3: {"name": "Zaļā hackere", "limit": 1, "cost": 100,
+    3: {"name": "Green Hacker", "limit": 1, "cost": 100,
         "levels": [(0, 0, 0, 0), (0, 0, 0, 110), (0, 0, 0, 220)]},
 }
 HACKER_INCOME = (20, 35, 60)
 SKILL_INFO = {
-    "damage": "Bojājums +10%",
-    "credits": "Hackere +$5",
-    "lives": "Dzīvības +1",
-    "range": "Diapazons +10",
-    "fire_rate": "Ātrāka šaušana +8%",
-    "start_money": "Sākuma nauda +$50",
-    "discount": "Vienību atlaide -$5",
+    "damage": "Damage +10%",
+    "credits": "Hacker Income +$5",
+    "lives": "Lives +1",
+    "range": "Targeting Range +10",
+    "fire_rate": "Fire Rate +8%",
+    "start_money": "Starting Credits +$50",
+    "discount": "Unit Cost -$5",
 }
 # Galvenajiem kaujas uzlabojumiem ir 10 līmeņi, pārējiem — 3.
 SKILL_MAX = {
@@ -118,6 +124,11 @@ SKILL_MAX = {
 status_message = ""
 status_timer = 0
 floating_texts = []
+implants = []
+active_pet = None
+secret_pet = None
+pet_quest_active = None
+pet_quest_progress = 0
 
 
 def local_db_connection():
@@ -295,13 +306,21 @@ class Button:
 
     def draw(self, surface, mouse_pos):
         is_hovered = self.rect.collidepoint(mouse_pos)
-        color = CYAN if is_hovered else DARK_GRAY
-        text_color = (0, 0, 0) if is_hovered else CYAN
-        
-        pygame.draw.rect(surface, color, self.rect, border_radius=8)
-        pygame.draw.rect(surface, CYAN, self.rect, width=2, border_radius=8)
-        
-        txt_surf = self.font.render(self.text, True, text_color)
+        fill = (25, 46, 75) if is_hovered else PANEL_COLOR
+        accent = NEON_PINK if is_hovered else CYAN
+        cut = 7
+        points = [
+            (self.rect.left + cut, self.rect.top), (self.rect.right - cut, self.rect.top),
+            (self.rect.right, self.rect.top + cut), (self.rect.right, self.rect.bottom - cut),
+            (self.rect.right - cut, self.rect.bottom), (self.rect.left + cut, self.rect.bottom),
+            (self.rect.left, self.rect.bottom - cut), (self.rect.left, self.rect.top + cut),
+        ]
+        pygame.draw.polygon(surface, fill, points)
+        pygame.draw.lines(surface, accent, True, points, 2)
+        # Sīkas "circuit" svītras pie pogas malas piešķir pixel/cyberpunk sajūtu.
+        pygame.draw.line(surface, accent, (self.rect.left + 10, self.rect.bottom - 7), (self.rect.left + 34, self.rect.bottom - 7), 1)
+        pygame.draw.line(surface, accent, (self.rect.right - 34, self.rect.top + 7), (self.rect.right - 10, self.rect.top + 7), 1)
+        txt_surf = self.font.render(self.text, False, WHITE if is_hovered else accent)
         txt_rect = txt_surf.get_rect(center=self.rect.center)
         surface.blit(txt_surf, txt_rect)
 
@@ -386,6 +405,28 @@ def load_direct_sprite(filename, size):
         return None
 
 
+def load_implant_sprite(filename, size):
+    """Mazs, caurspīdīgs implanta sprites, kas redzams kā kritiens kartē."""
+    try:
+        image = pygame.image.load(filename).convert_alpha()
+        image = pygame.transform.smoothscale(image, size)
+        return clean_dark_background(image, size)
+    except (pygame.error, FileNotFoundError):
+        return None
+
+
+def load_secret_pet_sprite(filename, crop, size):
+    """Izgriež mazo pixel pet no lietotāja dotās atsauces un noņem tumšo fonu."""
+    try:
+        image = pygame.image.load(filename).convert_alpha()
+        if crop:
+            image = image.subsurface(pygame.Rect(crop)).copy()
+        image = pygame.transform.smoothscale(image, size)
+        return clean_dark_background(image, size)
+    except (pygame.error, ValueError, FileNotFoundError):
+        return None
+
+
 UNIT_SPRITES = {
     1: [
         load_direct_sprite("cyborg_blue_1.png", (38, 68)),
@@ -423,6 +464,40 @@ ENEMY_SPRITES = {
     "final_boss": load_direct_sprite("crimson_dragon.png", (132, 104)),
 }
 
+IMPLANT_SPRITES = {
+    "pistol": load_implant_sprite("implant_pistol.png", (30, 18)),
+    "arm": load_implant_sprite("implant_arm.png", (30, 18)),
+    "eye": load_implant_sprite("implant_eye.png", (22, 22)),
+}
+IMPLANT_COLORS = {"pistol": RED, "arm": (210, 210, 220), "eye": (255, 120, 80)}
+IMPLANT_NAMES = {"pistol": "Pistole +10% damage", "arm": "Roka +5% attack speed", "eye": "Acs +10% range"}
+
+PET_DATA = {
+    "octopus": {
+        "name": "OCTOPUS", "buff": "+30% RANGE", "range": 1.30, "speed": 1.00, "damage": 1.00,
+        "quest_type": "kills", "quest_target": 8, "quest_text": "Defeat 8 enemies",
+    },
+    "platypus": {
+        "name": "PLATYPUS", "buff": "+15% ATTACK SPEED", "range": 1.00, "speed": 1.15, "damage": 1.00,
+        "quest_type": "volleys", "quest_target": 12, "quest_text": "Fire 12 volleys",
+    },
+    "sphinx": {
+        "name": "SPHINX CAT", "buff": "+30% DAMAGE", "range": 1.00, "speed": 1.00, "damage": 1.30,
+        "quest_type": "damage", "quest_target": 500, "quest_text": "Deal 500 damage",
+    },
+}
+PET_SPRITES = {
+    # Atsauce: kaķis | platypus | octopus. Izgriežam tikai vajadzīgo tēlu.
+    "octopus": load_secret_pet_sprite("secret_pets.png", (1000, 170, 500, 590), (44, 44)),
+    "platypus": load_secret_pet_sprite("secret_pets.png", (465, 290, 520, 500), (44, 44)),
+    "sphinx": load_secret_pet_sprite("secret_sphinx_cat.png", (260, 120, 720, 1040), (44, 50)),
+}
+SECRET_PET_POSITIONS = {
+    1: (105, 705),
+    2: (975, 285),
+    3: (340, 640),
+}
+
 
 class Tower:
     def __init__(self, x, y, t_type):
@@ -433,14 +508,16 @@ class Tower:
         self.aim_angle = 0
         self._rotation_key = None
         self._rotated_sprite = None
+        self.implants = {"pistol": 0, "arm": 0, "eye": 0}
         self.apply_level_stats()
 
     def apply_level_stats(self):
         damage, attack_range, fire_rate, _ = UNIT_STATS[self.type]["levels"][self.level - 1]
-        self.damage = int(damage * (1 + skills["damage"] * 0.10))
-        self.range = attack_range + skills["range"] * 10
+        pet = PET_DATA.get(active_pet, {"range": 1.0, "speed": 1.0, "damage": 1.0})
+        self.damage = int(damage * (1 + skills["damage"] * 0.10) * (1 + self.implants["pistol"] * 0.10) * pet["damage"])
+        self.range = int((attack_range + skills["range"] * 10) * (1 + self.implants["eye"] * 0.10) * pet["range"])
         # Visas kaujas vienības šauj 1,5× ātrāk; Skill Tree to vēl paātrina.
-        self.fire_rate = max(4, int(fire_rate / (GAME_SPEED * (1 + skills["fire_rate"] * 0.10))))
+        self.fire_rate = max(4, int(fire_rate / (GAME_SPEED * (1 + skills["fire_rate"] * 0.10) * (1 + self.implants["arm"] * 0.05) * pet["speed"])))
 
     def upgrade(self):
         global money, status_message, status_timer
@@ -461,6 +538,17 @@ class Tower:
         color = (0, 180, 255) if self.type == 1 else ((255, 70, 70) if self.type == 2 else GREEN)
         if self.type != 3:
             pygame.draw.circle(surface, color, (self.x, self.y), self.range, 1)
+        implant_count = sum(self.implants.values())
+        if implant_count:
+            # Šaura ovāla aura ieskauj visu vienību. Vairāk implantu = spožāk,
+            # nevis daudz lielāk, tāpēc tā neaizklāj blakus vienības.
+            aura_w = 62 if self.level < 3 else 70
+            aura_h = 88 if self.level < 3 else 94
+            glow_alpha = min(150, 38 + implant_count * 18)
+            glow = pygame.Surface((aura_w, aura_h), pygame.SRCALPHA)
+            pygame.draw.ellipse(glow, (255, 70, 50, glow_alpha), (3, 3, aura_w - 6, aura_h - 6), 4)
+            pygame.draw.ellipse(glow, (255, 150, 90, min(205, glow_alpha + 35)), (8, 9, aura_w - 16, aura_h - 18), 2)
+            surface.blit(glow, glow.get_rect(center=(self.x, self.y)))
         sprite = UNIT_SPRITES[self.type][self.level - 1]
         if sprite:
             # Tēls vēršas pret tuvāko ienaidnieku; Hackere paliek taisni.
@@ -503,14 +591,119 @@ class Enemy:
         self.speed = speed * mode["speed"] * GAME_SPEED
 
 class Bullet:
-    def __init__(self, x, y, target, damage, angle_offset=0):
+    def __init__(self, x, y, target, damage, owner, angle_offset=0):
         self.x = x
         self.y = y
         self.damage = damage
+        self.owner = owner
         self.speed = 9.0 * GAME_SPEED
         angle = math.atan2(target.y - y, target.x - x) + math.radians(angle_offset)
         self.vx = math.cos(angle) * self.speed
         self.vy = math.sin(angle) * self.speed
+
+
+class Implant:
+    """Vispirms nokrīt pie uzvarētā pretinieka, tad aizlido pie šāvēja."""
+    def __init__(self, kind, x, y, target):
+        self.kind = kind
+        self.x, self.y = x, y
+        self.floor_y = min(HEIGHT - 24, y + 26)
+        self.target = target
+        self.fall_frames = 20
+
+    def update(self):
+        if self.fall_frames > 0:
+            self.y += (self.floor_y - self.y) * 0.22
+            self.fall_frames -= 1
+            return False
+        dx, dy = self.target.x - self.x, self.target.y - self.y
+        distance = math.hypot(dx, dy)
+        if distance <= 8:
+            self.target.implants[self.kind] += 1
+            self.target.apply_level_stats()
+            floating_texts.append([self.target.x, self.target.y - 54, IMPLANT_NAMES[self.kind], 100])
+            return True
+        speed = 6.5
+        self.x += dx / distance * min(speed, distance)
+        self.y += dy / distance * min(speed, distance)
+        return False
+
+    def draw(self, surface):
+        sprite = IMPLANT_SPRITES.get(self.kind)
+        if sprite:
+            surface.blit(sprite, sprite.get_rect(center=(int(self.x), int(self.y))))
+        else:
+            pygame.draw.circle(surface, IMPLANT_COLORS[self.kind], (int(self.x), int(self.y)), 8)
+
+
+class SecretPet:
+    """Mazs, klikšķināms slepenais pet konkrētajai kartei."""
+    def __init__(self, kind, x, y):
+        self.kind, self.x, self.y = kind, x, y
+        self.pulse = 0
+
+    def is_clicked(self, x, y):
+        return math.hypot(self.x - x, self.y - y) <= 30
+
+    def draw(self, surface):
+        self.pulse = (self.pulse + 1) % 60
+        ring_radius = 24 + (self.pulse // 20)
+        ring_color = NEON_PINK if pet_quest_active == self.kind else YELLOW
+        pygame.draw.circle(surface, ring_color, (self.x, self.y), ring_radius, 1)
+        sprite = PET_SPRITES.get(self.kind)
+        if sprite:
+            surface.blit(sprite, sprite.get_rect(center=(self.x, self.y)))
+        else:
+            pygame.draw.circle(surface, YELLOW, (self.x, self.y), 15)
+
+
+def start_pet_quest():
+    """Uzklikšķinot uz pet, parāda tā unikālo questu."""
+    global pet_quest_active, pet_quest_progress, status_message, status_timer
+    if secret_pet is None:
+        return
+    if pet_quest_active:
+        status_message, status_timer = "Quest already active", 90
+        return
+    pet_quest_active = secret_pet.kind
+    pet_quest_progress = 0
+    pet = PET_DATA[pet_quest_active]
+    status_message = f"SECRET QUEST: {pet['quest_text']}"
+    status_timer = 180
+
+
+def collect_secret_pet():
+    """Aktivizē pet buffu visām esošajām vienībām un arī nākamajām."""
+    global active_pet, secret_pet, pet_quest_active, status_message, status_timer
+    if secret_pet is None or pet_quest_active is None:
+        return
+    active_pet = secret_pet.kind
+    for tower in towers:
+        tower.apply_level_stats()
+    status_message = f"SECRET PET: {PET_DATA[active_pet]['name']} — {PET_DATA[active_pet]['buff']}"
+    status_timer = 210
+    floating_texts.append([secret_pet.x, secret_pet.y - 28, "SECRET PET FOUND!", 130])
+    secret_pet = None
+    pet_quest_active = None
+
+
+def advance_pet_quest(action, amount=1):
+    """Pieskaita progresu tikai aktīvā pet atbilstošajam questam."""
+    global pet_quest_progress
+    if not pet_quest_active:
+        return
+    pet = PET_DATA[pet_quest_active]
+    if pet["quest_type"] != action:
+        return
+    pet_quest_progress = min(pet["quest_target"], pet_quest_progress + amount)
+    if pet_quest_progress >= pet["quest_target"]:
+        collect_secret_pet()
+
+
+def try_drop_implant(enemy, owner):
+    """5% iespēja: nejaušs implants nokrīt un tiek piešķirts šāvējam."""
+    if owner and random.random() < 0.05:
+        implants.append(Implant(random.choice(("pistol", "arm", "eye")), enemy.x, enemy.y, owner))
 
 def pay_hacker_income(phase):
     global money, floating_texts
@@ -540,12 +733,33 @@ def api_request(method, endpoint, payload=None, token=None):
         return 0, {"detail": "Serveris nav palaists"}
 
 
-def local_login(name):
-    """Atver vai izveido profilu vietējā game.db failā."""
+def password_hash(password, salt=None):
+    """Parolei datubāzē glabājas PBKDF2 hash, nevis pats paroles teksts."""
+    salt = salt or os.urandom(16).hex()
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), 180000).hex()
+    return f"{salt}${digest}"
+
+
+def password_matches(password, stored_hash):
+    try:
+        salt, _ = stored_hash.split("$", 1)
+        return hmac.compare_digest(password_hash(password, salt), stored_hash)
+    except (ValueError, TypeError):
+        return False
+
+
+def local_login(name, password):
+    """Atver vai izveido ar paroli aizsargātu profilu vietējā game.db failā."""
     with local_db_connection() as conn:
-        exists = conn.execute("SELECT 1 FROM players WHERE name = ?", (name,)).fetchone()
-        if exists is None:
-            conn.execute("INSERT INTO players (name, password_hash) VALUES (?, ?)", (name, ""))
+        row = conn.execute("SELECT password_hash FROM players WHERE name = ?", (name,)).fetchone()
+        if row is None:
+            conn.execute("INSERT INTO players (name, password_hash) VALUES (?, ?)", (name, password_hash(password)))
+        elif not row[0]:
+            # Vecajiem profiliem pirmā ievadītā parole kļūst par aizsardzību.
+            conn.execute("UPDATE players SET password_hash = ? WHERE name = ?", (password_hash(password), name))
+        elif not password_matches(password, row[0]):
+            return False
+    return True
 
 
 def local_load_progress():
@@ -582,8 +796,17 @@ def local_save_score(wave):
 
 def login_account():
     global api_token, player_name, account_message, local_database_mode
-    status, data = api_request("POST", "/login-name", {
+    name = account_name_buffer.strip()
+    password = account_password_buffer
+    if len(name) < 2:
+        account_message = "Lietotājvārdā vajag vismaz 2 burtus."
+        return False
+    if len(password) < 4:
+        account_message = "Parolei vajag vismaz 4 simbolus."
+        return False
+    status, data = api_request("POST", "/login", {
         "name": account_name_buffer.strip(),
+        "password": password,
     })
     if status == 200:
         api_token = data["token"]
@@ -591,17 +814,18 @@ def login_account():
         local_database_mode = False
         load_player_progress()
         account_message = f"Pieslēdzies kā {player_name}. Progress atjaunots."
+        return True
     else:
         # Ja serveris nav palaists, profils tik un tā strādā lokālajā SQLite datubāzē.
-        player_name = account_name_buffer.strip()
-        if len(player_name) < 2:
-            account_message = "Lietotājvārdā vajag vismaz 2 burtus."
-            return
-        local_login(player_name)
+        player_name = name
+        if not local_login(player_name, password):
+            account_message = "Nepareiza parole šim lietotājvārdam."
+            return False
         local_database_mode = True
         api_token = "LOCAL_DATABASE"
         load_player_progress()
         account_message = f"Pieslēdzies kā {player_name}. Progress saglabājas game.db."
+        return True
 
 
 def load_online_leaderboard():
@@ -683,15 +907,22 @@ def enemies_for_wave(level, wave, is_infinite):
 
 
 def start_level(lvl, is_infinite=False):
-    global current_level, path, lives, money, towers, enemies, bullets, spawn_timer, current_wave, max_waves, enemies_spawned_in_wave, enemies_to_spawn, floating_texts, wave_start_paid, infinite_mode, wave_transition_start, game_over_recorded
+    global current_level, path, lives, money, towers, enemies, bullets, implants, active_pet, secret_pet, pet_quest_active, pet_quest_progress, spawn_timer, current_wave, max_waves, enemies_spawned_in_wave, enemies_to_spawn, floating_texts, wave_start_paid, infinite_mode, wave_transition_start, game_over_recorded
     current_level = lvl
     infinite_mode = is_infinite
     path = LEVEL_PATHS[lvl]
-    lives = 5 + skills["lives"]
+    lives = 3 + skills["lives"]
     money = 250 + skills["start_money"] * 50
     towers = []
     enemies = []
     bullets = []
+    implants = []
+    active_pet = None
+    pet_quest_active = None
+    pet_quest_progress = 0
+    pet_kind = {1: "octopus", 2: "platypus", 3: "sphinx"}[lvl]
+    pet_x, pet_y = SECRET_PET_POSITIONS[lvl]
+    secret_pet = SecretPet(pet_kind, pet_x, pet_y)
     spawn_timer = 0
     current_wave = 1
     max_waves = 999999 if is_infinite else GAME_MODES[lvl]["waves"]
@@ -712,11 +943,11 @@ wave_start_paid = False
 wave_transition_start = None
 game_over_recorded = False
 
-# Fonti
-font_ui = pygame.font.Font(None, 24)
-font_btn = pygame.font.Font(None, 32)
-font_title = pygame.font.Font(None, 52)
-font_card = pygame.font.Font(None, 20)
+# Monospace fonts un neizlīdzināts teksts piešķir ekrāniem pixel/cyberpunk izskatu.
+font_ui = pygame.font.SysFont("consolas", 21, bold=True)
+font_btn = pygame.font.SysFont("consolas", 27, bold=True)
+font_title = pygame.font.SysFont("consolas", 44, bold=True)
+font_card = pygame.font.SysFont("consolas", 17, bold=True)
 
 # Pogas
 btn_w, btn_h = 280, 55
@@ -728,8 +959,8 @@ btn_skills = Button(center_x, 330, btn_w, btn_h, "SKILL TREE", font_btn)
 btn_settings = Button(center_x, 395, btn_w, btn_h, "IESTATĪJUMI", font_btn)
 btn_account = Button(center_x, 460, btn_w, btn_h, "KONTS / PIESLĒGTIES", font_btn)
 btn_exit = Button(center_x, 525, btn_w, btn_h, "IZIET", font_btn)
-btn_rules = Button(center_x, 590, btn_w, btn_h, "RULES (HTML)", font_btn)
-btn_html_leaderboard = Button(center_x, 655, btn_w, btn_h, "LEADERBOARD (HTML)", font_btn)
+btn_rules = Button(center_x, 590, btn_w, btn_h, "NOTEIKUMI", font_btn)
+btn_html_leaderboard = Button(center_x, 655, btn_w, btn_h, "LEADERBOARD", font_btn)
 
 btn_lvl1 = Button(center_x, 270, btn_w, btn_h, "KARTE 1: 15 VIĻŅI", font_btn)
 btn_lvl2 = Button(center_x, 340, btn_w, btn_h, "KARTE 2: 15 VIĻŅI", font_btn)
@@ -808,22 +1039,37 @@ while running:
             elif game_state == "NAME_ENTRY":
                 if event.key == pygame.K_RETURN:
                     account_name_buffer = name_buffer.strip()
-                    if account_name_buffer:
-                        login_account()
-                    else:
-                        player_name = "Spēlētājs"
-                    game_state = "MENU"
+                    account_password_buffer = password_buffer
+                    if login_account():
+                        game_state = "MENU"
+                elif event.key == pygame.K_TAB:
+                    account_field = "password" if account_field == "name" else "name"
                 elif event.key == pygame.K_BACKSPACE:
-                    name_buffer = name_buffer[:-1]
-                elif event.unicode.isprintable() and len(name_buffer) < 16:
-                    name_buffer += event.unicode
+                    if account_field == "password":
+                        password_buffer = password_buffer[:-1]
+                    else:
+                        name_buffer = name_buffer[:-1]
+                elif event.unicode.isprintable():
+                    if account_field == "password" and len(password_buffer) < 32:
+                        password_buffer += event.unicode
+                    elif account_field == "name" and len(name_buffer) < 16:
+                        name_buffer += event.unicode
             elif game_state == "ACCOUNT":
                 if event.key == pygame.K_RETURN:
-                    login_account()
+                    if login_account():
+                        game_state = "MENU"
+                elif event.key == pygame.K_TAB:
+                    account_field = "password" if account_field == "name" else "name"
                 elif event.key == pygame.K_BACKSPACE:
-                    account_name_buffer = account_name_buffer[:-1]
-                elif event.unicode.isprintable() and len(account_name_buffer) < 16:
-                    account_name_buffer += event.unicode
+                    if account_field == "password":
+                        account_password_buffer = account_password_buffer[:-1]
+                    else:
+                        account_name_buffer = account_name_buffer[:-1]
+                elif event.unicode.isprintable():
+                    if account_field == "password" and len(account_password_buffer) < 32:
+                        account_password_buffer += event.unicode
+                    elif account_field == "name" and len(account_name_buffer) < 16:
+                        account_name_buffer += event.unicode
             elif game_state == "VICTORY" and event.key == pygame.K_l and leaderboard_unlocked:
                 load_online_leaderboard()
                 game_state = "LEADERBOARD"
@@ -867,8 +1113,9 @@ while running:
             game_state = "SETTINGS"
         if btn_account.is_clicked(mouse_pos, mouse_clicked):
             account_name_buffer = player_name if player_name != "Spēlētājs" else ""
+            account_password_buffer = ""
             account_field = "name"
-            account_message = "Ievadi savu lietotājvārdu. Ar to atjaunosies tavs progress."
+            account_message = "Ievadi lietotājvārdu un paroli, lai atjaunotu progresu."
             game_state = "ACCOUNT"
         if btn_rules.is_clicked(mouse_pos, mouse_clicked):
             webbrowser.open(API_URL + "/rules")
@@ -883,17 +1130,22 @@ while running:
     elif game_state == "ACCOUNT":
         screen.fill(BG_COLOR)
         title_surf = font_title.render("KONTS", True, CYAN)
-        name_surf = font_btn.render(f"Lietotājvārds: {account_name_buffer}", True, YELLOW)
-        hint_surf = font_ui.render("Ievadi to pašu vārdu, lai atjaunotu kartes un Skill Tree progresu", True, WHITE)
+        name_color = YELLOW if account_field == "name" else WHITE
+        password_color = YELLOW if account_field == "password" else WHITE
+        name_surf = font_btn.render(f"Lietotājvārds: {account_name_buffer}", True, name_color)
+        password_surf = font_btn.render(f"Parole: {'*' * len(account_password_buffer)}", True, password_color)
+        hint_surf = font_ui.render("TAB — pārslēgt lauku | ENTER — turpināt", True, WHITE)
         message_surf = font_ui.render(account_message, True, GREEN if api_token else YELLOW)
         screen.blit(title_surf, title_surf.get_rect(center=(WIDTH // 2, 190)))
-        screen.blit(name_surf, name_surf.get_rect(center=(WIDTH // 2, 280)))
-        screen.blit(hint_surf, hint_surf.get_rect(center=(WIDTH // 2, 335)))
-        screen.blit(message_surf, message_surf.get_rect(center=(WIDTH // 2, 360)))
+        screen.blit(name_surf, name_surf.get_rect(center=(WIDTH // 2, 270)))
+        screen.blit(password_surf, password_surf.get_rect(center=(WIDTH // 2, 315)))
+        screen.blit(hint_surf, hint_surf.get_rect(center=(WIDTH // 2, 355)))
+        screen.blit(message_surf, message_surf.get_rect(center=(WIDTH // 2, 380)))
         btn_login.draw(screen, mouse_pos)
         btn_account_back.draw(screen, mouse_pos)
         if btn_login.is_clicked(mouse_pos, mouse_clicked):
-            login_account()
+            if login_account():
+                game_state = "MENU"
         if btn_account_back.is_clicked(mouse_pos, mouse_clicked):
             game_state = "MENU"
 
@@ -942,8 +1194,11 @@ while running:
         btn_route.draw(screen, mouse_pos)
         btn_settings_back.draw(screen, mouse_pos)
         if btn_name.is_clicked(mouse_pos, mouse_clicked):
-            name_buffer = player_name
-            game_state = "NAME_ENTRY"
+            account_name_buffer = player_name if player_name != "Spēlētājs" else ""
+            account_password_buffer = ""
+            account_field = "name"
+            account_message = "Ievadi lietotājvārdu un paroli."
+            game_state = "ACCOUNT"
         if btn_route.is_clicked(mouse_pos, mouse_clicked):
             show_route = not show_route
         if btn_settings_back.is_clicked(mouse_pos, mouse_clicked):
@@ -954,12 +1209,19 @@ while running:
     # =========================
     elif game_state == "NAME_ENTRY":
         screen.fill(BG_COLOR)
-        title_surf = font_title.render("IEVADI SAVU VĀRDU", True, CYAN)
-        name_surf = font_btn.render(name_buffer + "_", True, WHITE)
-        hint_surf = font_ui.render("ENTER — turpināt | ESC — izlaist | BACKSPACE — dzēst", True, YELLOW)
-        screen.blit(title_surf, title_surf.get_rect(center=(WIDTH // 2, 250)))
-        screen.blit(name_surf, name_surf.get_rect(center=(WIDTH // 2, 330)))
-        screen.blit(hint_surf, hint_surf.get_rect(center=(WIDTH // 2, 390)))
+        title_surf = font_title.render("IZVEIDO / ATVĒR PROFILU", True, CYAN)
+        name_color = YELLOW if account_field == "name" else WHITE
+        password_color = YELLOW if account_field == "password" else WHITE
+        name_surf = font_btn.render(f"Lietotājvārds: {name_buffer}" + ("_" if account_field == "name" else ""), True, name_color)
+        password_surf = font_btn.render(f"Parole: {'*' * len(password_buffer)}" + ("_" if account_field == "password" else ""), True, password_color)
+        hint_surf = font_ui.render("TAB — pārslēgt lauku | ENTER — turpināt | parolei vismaz 4 simboli", True, YELLOW)
+        message_surf = font_ui.render(account_message, True, RED if account_message else WHITE)
+        screen.blit(title_surf, title_surf.get_rect(center=(WIDTH // 2, 240)))
+        screen.blit(name_surf, name_surf.get_rect(center=(WIDTH // 2, 315)))
+        screen.blit(password_surf, password_surf.get_rect(center=(WIDTH // 2, 360)))
+        screen.blit(hint_surf, hint_surf.get_rect(center=(WIDTH // 2, 420)))
+        if account_message:
+            screen.blit(message_surf, message_surf.get_rect(center=(WIDTH // 2, 455)))
 
     # =========================
     # 5. SKILL TREE
@@ -1032,19 +1294,22 @@ while running:
 
         if mouse_clicked:
             mx, my = mouse_pos
-            unit = UNIT_STATS[selected_tower_type]
-            cost = max(1, unit["cost"] - skills["discount"] * 5)
-            if money >= cost:
-                if can_build_here(mx, my, current_level):
-                    placed_count = sum(t.type == selected_tower_type for t in towers)
-                    if placed_count < unit["limit"]:
-                        towers.append(Tower(mx, my, selected_tower_type))
-                        money -= cost
-                    else:
-                        status_message = f"{unit['name']}: limits {placed_count}/{unit['limit']}"
-                        status_timer = 120
+            if secret_pet and secret_pet.is_clicked(mx, my):
+                start_pet_quest()
             else:
-                status_message, status_timer = f"Vajag ${cost}", 120
+                unit = UNIT_STATS[selected_tower_type]
+                cost = max(1, unit["cost"] - skills["discount"] * 5)
+                if money >= cost:
+                    if can_build_here(mx, my, current_level):
+                        placed_count = sum(t.type == selected_tower_type for t in towers)
+                        if placed_count < unit["limit"]:
+                            towers.append(Tower(mx, my, selected_tower_type))
+                            money -= cost
+                        else:
+                            status_message = f"{unit['name']}: limits {placed_count}/{unit['limit']}"
+                            status_timer = 120
+                else:
+                    status_message, status_timer = f"Vajag ${cost}", 120
 
         if mouse_right_clicked:
             mx, my = mouse_pos
@@ -1137,7 +1402,7 @@ while running:
                 elif target:
                     if t.type == 1:
                         if len(bullets) < MAX_ACTIVE_BULLETS:
-                            bullets.append(Bullet(t.x, t.y, target, t.damage))
+                            bullets.append(Bullet(t.x, t.y, target, t.damage, t))
                     else:
                         # Bise izšauj vāju ložu vēdekli trijstūra formā.
                         spread = [-18, 0, 18]
@@ -1145,8 +1410,9 @@ while running:
                             spread.extend([-30, 30])
                         available_slots = max(0, MAX_ACTIVE_BULLETS - len(bullets))
                         for angle_offset in spread[:available_slots]:
-                            bullets.append(Bullet(t.x, t.y, target, t.damage, angle_offset))
+                            bullets.append(Bullet(t.x, t.y, target, t.damage, t, angle_offset))
                     t.cooldown = t.fire_rate
+                    advance_pet_quest("volleys")
 
             for b in bullets[:]:
                 b.x += b.vx
@@ -1154,9 +1420,12 @@ while running:
                 hit_enemy = next((enemy for enemy in enemies if math.hypot(enemy.x - b.x, enemy.y - b.y) <= enemy.radius + 3), None)
                 if hit_enemy:
                     hit_enemy.health -= b.damage
+                    advance_pet_quest("damage", b.damage)
                     if hit_enemy.health <= 0:
                         reward = 250 if hit_enemy.kind == "final_boss" else (100 if hit_enemy.is_boss else 20)
                         money += int(reward * GAME_MODES[current_level]["reward"])
+                        try_drop_implant(hit_enemy, b.owner)
+                        advance_pet_quest("kills")
                         enemies.remove(hit_enemy)
                     bullets.remove(b)
                 elif b.x < 0 or b.x > WIDTH or b.y < 115 or b.y > HEIGHT:
@@ -1164,6 +1433,16 @@ while running:
 
         for t in towers:
             t.draw(screen)
+
+        if secret_pet:
+            secret_pet.draw(screen)
+
+        # Implanti ir redzami, vispirms nokrīt un tikai tad aizlido pie vienības.
+        for implant in implants[:]:
+            if implant.update():
+                implants.remove(implant)
+            else:
+                implant.draw(screen)
             
         for enemy in enemies:
             color = BOSS_COLOR if enemy.is_boss else RED
@@ -1199,19 +1478,37 @@ while running:
                 floating_texts.remove(text)
 
         # UI Josla
-        pygame.draw.rect(screen, DARK_GRAY, (0, 0, WIDTH, 118))
+        pygame.draw.rect(screen, PANEL_COLOR, (0, 0, WIDTH, 118))
+        pygame.draw.line(screen, CYAN, (0, 117), (WIDTH, 117), 2)
+        pygame.draw.line(screen, NEON_PINK, (0, 120), (260, 120), 2)
         mode_name = "INFINITE MODE" if infinite_mode else GAME_MODES[current_level]["name"]
         wave_total = "∞" if infinite_mode else str(max_waves)
         ui_text = font_ui.render(f"{mode_name} | Vilnis: {current_wave}/{wave_total} | Dzīv: {lives} | Nauda: ${money}", True, GREEN)
         screen.blit(ui_text, (15, 7))
+        if active_pet:
+            pet_status = PET_DATA[active_pet]
+            pet_text = font_card.render(f"PET: {pet_status['name']} {pet_status['buff']}", False, YELLOW)
+            screen.blit(pet_text, pet_text.get_rect(topright=(WIDTH - 14, 8)))
+        elif pet_quest_active:
+            quest_pet = PET_DATA[pet_quest_active]
+            quest_panel = pygame.Rect(WIDTH - 350, 122, 340, 44)
+            pygame.draw.rect(screen, PANEL_COLOR, quest_panel)
+            pygame.draw.rect(screen, NEON_PINK, quest_panel, 2)
+            quest_text = font_card.render(
+                f"QUEST: {quest_pet['quest_text']} {pet_quest_progress}/{quest_pet['quest_target']}", False, WHITE
+            )
+            screen.blit(quest_text, quest_text.get_rect(center=quest_panel.center))
 
         for unit_type in (1, 2, 3):
             unit = UNIT_STATS[unit_type]
             x = 10 + (unit_type - 1) * 338
             count = sum(t.type == unit_type for t in towers)
-            selected_color = CYAN if selected_tower_type == unit_type else (70, 70, 90)
-            pygame.draw.rect(screen, (22, 22, 35), (x, 33, 328, 52), border_radius=6)
-            pygame.draw.rect(screen, selected_color, (x, 33, 328, 52), 2, border_radius=6)
+            unit_color = CYAN if unit_type == 1 else (NEON_PINK if unit_type == 2 else GREEN)
+            selected_color = unit_color if selected_tower_type == unit_type else (72, 91, 122)
+            card = pygame.Rect(x, 33, 328, 52)
+            pygame.draw.rect(screen, (14, 22, 40), card)
+            pygame.draw.rect(screen, selected_color, card, 2)
+            pygame.draw.line(screen, unit_color, (x + 8, 37), (x + 52, 37), 2)
             name = font_card.render(f"[{unit_type}] {unit['name']}", True, selected_color)
             current_cost = max(1, unit['cost'] - skills['discount'] * 5)
             details = font_card.render(f"Cena ${current_cost} | Novietots: {count}/{unit['limit']}", True, WHITE)

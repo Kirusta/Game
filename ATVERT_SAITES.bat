@@ -6,5 +6,6 @@ start "CyberTD datubāze" /min /D "%~dp0" "%PYTHON_EXE%" start_server.py
 timeout /t 2 /nobreak >nul
 start "" "http://127.0.0.1:8000/rules"
 start "" "http://127.0.0.1:8000/leaderboard"
-echo Serveris ir palaists. Šo logu vari aizvērt tikai tad, kad abas lapas vairs nevajag.
+start "" "http://127.0.0.1:8000/database"
+echo Serveris ir palaists. Šo logu vari aizvērt tikai tad, kad lapas vairs nevajag.
 pause

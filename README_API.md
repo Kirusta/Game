@@ -20,5 +20,6 @@ Pēc tam atver `http://127.0.0.1:8000/docs`.
 3. Pēc Infinite Mode zaudējuma spēle automātiski nosūta sasniegto vilni uz datubāzi.
 4. `http://localhost:8000/rules` rāda noteikumus.
 5. `http://localhost:8000/leaderboard` parāda TOP 10 Infinite Mode rezultātus.
+6. `http://localhost:8000/database` parāda visus spēlētājus, rezultātu vēsturi un saglabāto progresu. Paroļu jaucējvērtības un pieslēgšanās tokeni drošības dēļ netiek rādīti.
 
 Serveris izmanto SQLite, tāpēc rekordi paliek arī pēc servera restarta.

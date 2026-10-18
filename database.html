@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="lv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cyber Tower Defense — datubāze</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0b1220; --panel:#121c2d; --line:#2a3b54; --text:#e7eef9; --muted:#9db0c9; --cyan:#42d9f5; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 Segoe UI,Arial,sans-serif; }
+    header { padding:30px max(20px, calc((100% - 1200px)/2)); background:linear-gradient(120deg,#101d33,#102d40); border-bottom:1px solid var(--line); }
+    h1 { margin:0 0 8px; font-size:clamp(26px,4vw,36px); }
+    header p { margin:0; color:var(--muted); }
+    main { max-width:1200px; margin:24px auto; padding:0 20px 40px; }
+    #status, .notice { color:var(--muted); }
+    .notice { border:1px solid #24536a; background:#102a3a; border-radius:10px; padding:12px 15px; margin:16px 0 24px; }
+    section { margin:24px 0; }
+    h2 { font-size:20px; margin:0 0 10px; }
+    .table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:var(--panel); }
+    table { width:100%; border-collapse:collapse; min-width:560px; }
+    th, td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+    th { color:var(--cyan); white-space:nowrap; }
+    tr:last-child td { border-bottom:0; }
+    td { overflow-wrap:anywhere; }
+    a { display:inline-block; margin:0 10px 8px 0; color:var(--text); background:#344256; padding:10px 14px; border-radius:7px; text-decoration:none; font-weight:700; }
+    a:hover { background:#465873; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Spēles datubāze</h1>
+    <p id="database-name">Ielādē datubāzes saturu...</p>
+  </header>
+  <main>
+    <p id="status" role="status" aria-live="polite">Notiek datu ielāde...</p>
+    <div class="notice">Drošības dēļ kontu paroļu jaucējvērtības un pieslēgšanās tokeni netiek rādīti.</div>
+    <section>
+      <h2>Spēlētāji</h2>
+      <div class="table-wrap"><table id="players"></table></div>
+    </section>
+    <section>
+      <h2>Visi rezultāti</h2>
+      <div class="table-wrap"><table id="scores"></table></div>
+    </section>
+    <section>
+      <h2>Saglabātais progress</h2>
+      <div class="table-wrap"><table id="progress"></table></div>
+    </section>
+    <a href="/">Sākumlapa</a>
+    <a href="/leaderboard">TOP 10</a>
+    <a href="/docs">API dokumentācija</a>
+  </main>
+  <script>
+    const status = document.getElementById('status');
+
+    function renderTable(id, columns, rows) {
+      const table = document.getElementById(id);
+      const head = document.createElement('thead');
+      const heading = document.createElement('tr');
+      columns.forEach(([key, label]) => {
+        const cell = document.createElement('th');
+        cell.scope = 'col';
+        cell.textContent = label;
+        heading.appendChild(cell);
+      });
+      head.appendChild(heading);
+      table.replaceChildren(head);
+
+      const body = document.createElement('tbody');
+      if (rows.length === 0) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = columns.length;
+        cell.textContent = 'Šeit vēl nav saglabātu datu.';
+        row.appendChild(cell);
+        body.appendChild(row);
+      } else {
+        rows.forEach(entry => {
+          const row = document.createElement('tr');
+          columns.forEach(([key]) => {
+            const cell = document.createElement('td');
+            const value = entry[key];
+            cell.textContent = key === 'skills' && value
+              ? JSON.stringify(JSON.parse(value), null, 2)
+              : value === null || value === undefined ? '' : String(value);
+            row.appendChild(cell);
+          });
+          body.appendChild(row);
+        });
+      }
+      table.appendChild(body);
+    }
+
+    fetch('/database/data', { cache: 'no-store' })
+      .then(response => {
+        if (!response.ok) throw new Error(`Servera kļūda (${response.status})`);
+        return response.json();
+      })
+      .then(data => {
+        document.getElementById('database-name').textContent = `Fails: ${data.database}`;
+        renderTable('players', [['name', 'Spēlētāja vārds']], data.players);
+        renderTable('scores', [
+          ['id', 'Ieraksta ID'],
+          ['player', 'Spēlētājs'],
+          ['score', 'Vilnis'],
+          ['created_at', 'Datums']
+        ], data.scores);
+        renderTable('progress', [
+          ['player', 'Spēlētājs'],
+          ['max_unlocked_map', 'Atvērtā karte'],
+          ['skill_points', 'Prasmju punkti'],
+          ['skills', 'Prasmes'],
+          ['infinite_unlocked', 'Infinite Mode atvērts']
+        ], data.progress);
+        status.textContent = `Ielādēti ${data.players.length} spēlētāji, ${data.scores.length} rezultāti un ${data.progress.length} progresa ieraksti.`;
+      })
+      .catch(error => {
+        status.textContent = `Neizdevās ielādēt datubāzi: ${error.message}. Pārliecinies, ka serveris darbojas, un pārlādē lapu.`;
+      });
+  </script>
+</body>
+</html>

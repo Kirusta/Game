@@ -14,6 +14,7 @@ import urllib.error
 import urllib.request
 import pygame
 
+# Inicializē Pygame un logu.
 pygame.init()
 
 WIDTH, HEIGHT = 1024, 768
@@ -28,6 +29,7 @@ MAX_IMPLANTS_PER_UNIT = 10
 API_URL = "http://localhost:8000"
 LOCAL_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "game.db")
 
+# Ielādē karti; kļūdas gadījumā izmanto fonu.
 def load_map_image(filename):
     try:
         return pygame.transform.scale(pygame.image.load(filename), (WIDTH, HEIGHT))
@@ -52,6 +54,7 @@ DARK_GRAY = (17, 24, 43)
 PANEL_COLOR = (12, 18, 34)
 NEON_PINK = (255, 55, 165)
 
+# Galvenie spēles stāvokļi un spēlētāja dati.
 game_state = "NAME_ENTRY"
 show_route = False
 max_unlocked_map = 1
@@ -82,12 +85,14 @@ current_level = 1
 current_wave = 1
 max_waves = 15
 
+# Katrai kartei savs grūtības līmenis.
 GAME_MODES = {
     1: {"name": "KARTE 1: STREET PATROL", "waves": 15, "hp": 1.00, "speed": 1.00, "reward": 1.00},
     2: {"name": "KARTE 2: NEON CHASM", "waves": 15, "hp": 1.25, "speed": 1.08, "reward": 1.20},
     3: {"name": "KARTE 3: CYBER DISTRICT", "waves": 20, "hp": 1.60, "speed": 1.16, "reward": 1.45},
 }
 
+# Vienību cena, limits un uzlabojumu parametri.
 UNIT_STATS = {
     1: {"name": "Blue Cyborg", "limit": 3, "cost": 75,
         "levels": [(12, 155, 33, 0), (25, 175, 24, 90), (52, 205, 17, 180)]},
@@ -96,7 +101,7 @@ UNIT_STATS = {
     3: {"name": "Green Hacker", "limit": 1, "cost": 100,
         "levels": [(0, 0, 0, 0), (0, 0, 0, 110), (0, 0, 0, 220)]},
 }
-HACKER_INCOME = (20, 35, 60)
+HACKER_INCOME = (30, 60, 100)
 SKILL_INFO = {
     "damage": "Damage +10%",
     "credits": "Hacker Income +$5",
@@ -119,6 +124,7 @@ secret_pet = None
 pet_quest_active = None
 pet_quest_progress = 0
 
+# Izveido lokālo SQLite datubāzi un tabulas.
 def local_db_connection():
     """Nodrošina vietējo SQLite datubāzi, arī ja API serveris nav palaists."""
     conn = sqlite3.connect(LOCAL_DB_PATH)
@@ -149,6 +155,7 @@ _initial_database = local_db_connection()
 _initial_database.commit()
 _initial_database.close()
 
+# Pārbauda, vai API serveris ir pieejams.
 def server_is_running():
     try:
         with socket.create_connection(("127.0.0.1", 8000), timeout=0.15):
@@ -156,6 +163,7 @@ def server_is_running():
     except OSError:
         return False
 
+# Automātiski palaiž serveri, ja vajag.
 def ensure_server_is_running():
     """Palaiž Leaderboard serveri automātiski, ja tas vēl nav palaists."""
     if server_is_running():
@@ -175,6 +183,7 @@ def ensure_server_is_running():
 
 ensure_server_is_running()
 
+# Pretinieku kustības ceļi katrai kartei.
 LEVEL_PATHS = {
     1: [
         (135, 655),  # ENTRY — ceļa vidus
@@ -213,6 +222,7 @@ LEVEL_PATHS = {
 
 path = LEVEL_PATHS[1]
 
+# Vietas, kur drīkst būvēt vienības.
 BUILD_ZONES_LVL1 = [
     pygame.Rect(140, 245, 130, 250),  # Kreisais lielais zaļais laukums
     pygame.Rect(230, 610, 145, 60),   # Apakšējais kreisais zaļais laukums
@@ -234,30 +244,25 @@ BUILD_ZONES = {
     ],
 }
 
+# Pārbauda, vai vieta der torņa būvēšanai.
 def can_build_here(x, y, level):
     if y < 120:
         return False
 
     if level in GAME_MODES:
         tower_area = pygame.Rect(x - 15, y - 15, 30, 30)
-        in_valid_zone = False
-        for zone in BUILD_ZONES[level]:
-            if zone.contains(tower_area):
-                in_valid_zone = True
-                break
-        if not in_valid_zone:
-            return False # Ja nav zaļajā zonā, neļauj novietot torni
-
-        for i in range(len(path) - 1):
-            p1 = path[i]
-            p2 = path[i + 1]
-            dist = dist_to_segment((x, y), p1, p2)
-            if dist < 22:
-                return False # Pārāk tuvu ceļam
-        return True
+        # Tornim jābūt zaļajā zonā un drošā attālumā no ceļa.
+        return (
+            any(zone.contains(tower_area) for zone in BUILD_ZONES[level])
+            and all(
+                dist_to_segment((x, y), start, end) >= 22
+                for start, end in zip(path, path[1:])
+            )
+        )
 
     return True
 
+# Aprēķina attālumu līdz ceļa posmam.
 def dist_to_segment(p, p1, p2):
     x, y = p
     x1, y1 = p1
@@ -271,6 +276,7 @@ def dist_to_segment(p, p1, p2):
     nearest_y = y1 + t * dy
     return math.hypot(x - nearest_x, y - nearest_y)
 
+# Poga ar neonīgu rāmi un klikšķa pārbaudi.
 class Button:
     def __init__(self, x, y, width, height, text, font):
         self.rect = pygame.Rect(x, y, width, height)
@@ -299,39 +305,7 @@ class Button:
     def is_clicked(self, mouse_pos, click):
         return click and self.rect.collidepoint(mouse_pos)
 
-def remove_checkered_background(image):
-    """Noņem gaišo rūtiņu fonu no lietotāja dotajām PNG atsaucēm."""
-    image = image.convert_alpha()
-    for y in range(image.get_height()):
-        for x in range(image.get_width()):
-            r, g, b, _ = image.get_at((x, y))
-            if r > 185 and g > 185 and b > 185 and max(r, g, b) - min(r, g, b) < 18:
-                image.set_at((x, y), (r, g, b, 0))
-    return image
-
-def remove_edge_background(image):
-    """Padara caurspīdīgu tikai fonu, kas savienots ar attēla malām."""
-    image = image.convert_alpha()
-    width, height = image.get_size()
-    visited, pending = set(), []
-
-    def is_background(x, y):
-        red, green, blue, _ = image.get_at((x, y))
-        return max(red, green, blue) - min(red, green, blue) < 34
-
-    for x in range(width):
-        pending.extend(((x, 0), (x, height - 1)))
-    for y in range(height):
-        pending.extend(((0, y), (width - 1, y)))
-    while pending:
-        x, y = pending.pop()
-        if (x, y) in visited or not (0 <= x < width and 0 <= y < height) or not is_background(x, y):
-            continue
-        visited.add((x, y))
-        image.set_at((x, y), (0, 0, 0, 0))
-        pending.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
-    return image
-
+# Padara tumšo sprite fonu caurspīdīgu.
 def clean_dark_background(image, size):
     """Noņem tumšo studijas fonu un cieši apgriež tēlu līdz redzamajai formai."""
     image = image.convert_alpha()
@@ -345,94 +319,54 @@ def clean_dark_background(image, size):
         image = image.subsurface(bounds).copy()
     return pygame.transform.smoothscale(image, size)
 
-def load_unit_sprite(filename, crop, size, remove_light_background=False):
-    """Ielādē lietotāja dotās tēlu atsauces; ja faila nav, spēle paliek spēlējama."""
-    try:
-        image = pygame.image.load(filename).convert()
-        image = image.subsurface(pygame.Rect(crop)).copy()
-        image.set_colorkey((0, 0, 0), pygame.RLEACCEL)
-        image = pygame.transform.smoothscale(image, (size[0] * 2, size[1] * 2))
-        if remove_light_background:
-            image = remove_edge_background(remove_checkered_background(image))
-            bounds = image.get_bounding_rect()
-            if bounds.width > 0 and bounds.height > 0:
-                image = image.subsurface(bounds).copy()
-            return pygame.transform.smoothscale(image, size)
-        return clean_dark_background(image, size)
-    except (pygame.error, ValueError, FileNotFoundError):
-        return None
-
-def load_direct_sprite(filename, size):
-    """Ielādē jau caurspīdīgu PNG sprite bez papildu izgriešanas."""
-    try:
-        image = pygame.image.load(filename).convert_alpha()
-        return pygame.transform.smoothscale(image, size)
-    except (pygame.error, FileNotFoundError):
-        return None
-
-def load_implant_sprite(filename, size):
-    """Mazs, caurspīdīgs implanta sprites, kas redzams kā kritiens kartē."""
-    try:
-        image = pygame.image.load(filename).convert_alpha()
-        image = pygame.transform.smoothscale(image, size)
-        return clean_dark_background(image, size)
-    except (pygame.error, FileNotFoundError):
-        return None
-
-def load_secret_pet_sprite(filename, crop, size):
-    """Izgriež mazo pixel pet no lietotāja dotās atsauces un noņem tumšo fonu."""
+# Ielādē sprite un pielāgo tā izmēru.
+def load_sprite(filename, size, crop=None, remove_dark_background=False):
+    """Ielādē, mērogo un vajadzības gadījumā apgriež sprite fonu."""
     try:
         image = pygame.image.load(filename).convert_alpha()
         if crop:
             image = image.subsurface(pygame.Rect(crop)).copy()
         image = pygame.transform.smoothscale(image, size)
-        return clean_dark_background(image, size)
+        return clean_dark_background(image, size) if remove_dark_background else image
     except (pygame.error, ValueError, FileNotFoundError):
         return None
 
+# Attēli spēlētāja vienībām dažādos līmeņos.
 UNIT_SPRITES = {
     1: [
-        load_direct_sprite("cyborg_blue_1.png", (38, 68)),
-        load_direct_sprite("cyborg_blue_2.png", (42, 70)),
-        load_direct_sprite("cyborg_blue_3.png", (56, 72)),
+        load_sprite("cyborg_blue_1.png", (38, 68)),
+        load_sprite("cyborg_blue_2.png", (42, 70)),
+        load_sprite("cyborg_blue_3.png", (56, 72)),
     ],
     2: [
-        load_direct_sprite("shotgun_red_1.png", (42, 66)),
-        load_direct_sprite("shotgun_red_2.png", (46, 68)),
-        load_direct_sprite("shotgun_red_3.png", (56, 72)),
+        load_sprite("shotgun_red_1.png", (42, 66)),
+        load_sprite("shotgun_red_2.png", (46, 68)),
+        load_sprite("shotgun_red_3.png", (56, 72)),
     ],
     3: [
-        load_direct_sprite("hacker_green_1.png", (34, 68)),
-        load_direct_sprite("hacker_green_2.png", (38, 70)),
-        load_direct_sprite("hacker_green_3 (1).png", (42, 74)),
+        load_sprite("hacker_green_1.png", (34, 68)),
+        load_sprite("hacker_green_2.png", (38, 70)),
+        load_sprite("hacker_green_3 (1).png", (42, 74)),
     ],
 }
 
-def load_enemy_sprite(filename, crop, size, remove_light_background=False):
-    try:
-        image = pygame.image.load(filename).convert()
-        image = image.subsurface(pygame.Rect(crop)).copy()
-        image.set_colorkey((0, 0, 0), pygame.RLEACCEL)
-        image = pygame.transform.smoothscale(image, size).convert_alpha()
-        return remove_edge_background(remove_checkered_background(image))
-    except (pygame.error, ValueError, FileNotFoundError):
-        return None
-
+# Pretinieku un bosu attēli.
 ENEMY_SPRITES = {
-    "basic": load_direct_sprite("mech_red_1.png", (30, 48)),
-    "mini_boss": load_direct_sprite("mech_red_2.png", (44, 62)),
-    "heavy": load_direct_sprite("mech_red_3.png", (66, 84)),
-    "final_boss": load_direct_sprite("crimson_dragon.png", (132, 104)),
+    "basic": load_sprite("mech_red_1.png", (30, 48)),
+    "mini_boss": load_sprite("mech_red_2.png", (44, 62)),
+    "heavy": load_sprite("mech_red_3.png", (66, 84)),
+    "final_boss": load_sprite("crimson_dragon.png", (132, 104)),
 }
 
 IMPLANT_SPRITES = {
-    "pistol": load_implant_sprite("implant_pistol.png", (30, 18)),
-    "arm": load_implant_sprite("implant_arm.png", (30, 18)),
-    "eye": load_implant_sprite("implant_eye.png", (22, 22)),
+    "pistol": load_sprite("implant_pistol.png", (30, 18), remove_dark_background=True),
+    "arm": load_sprite("implant_arm.png", (30, 18), remove_dark_background=True),
+    "eye": load_sprite("implant_eye.png", (22, 22), remove_dark_background=True),
 }
 IMPLANT_COLORS = {"pistol": RED, "arm": (210, 210, 220), "eye": (255, 120, 80)}
 IMPLANT_NAMES = {"pistol": "Pistole +10% damage", "arm": "Roka +5% attack speed", "eye": "Acs +10% range"}
 
+# Slepeno pet bonusi un uzdevumi.
 PET_DATA = {
     "octopus": {
         "name": "OCTOPUS", "buff": "+30% RANGE", "range": 1.30, "speed": 1.00, "damage": 1.00,
@@ -448,9 +382,9 @@ PET_DATA = {
     },
 }
 PET_SPRITES = {
-    "octopus": load_secret_pet_sprite("secret_pets.png", (1000, 170, 500, 590), (44, 44)),
-    "platypus": load_secret_pet_sprite("secret_pets.png", (465, 290, 520, 500), (44, 44)),
-    "sphinx": load_secret_pet_sprite("secret_sphinx_cat.png", (260, 120, 720, 1040), (44, 50)),
+    "octopus": load_sprite("Octapus.png", (44, 44), remove_dark_background=True),
+    "platypus": load_sprite("Platapus.png", (44, 44), remove_dark_background=True),
+    "sphinx": load_sprite("secret_sphinx_cat.png", (44, 50), (260, 120, 720, 1040), True),
 }
 SECRET_PET_POSITIONS = {
     1: (105, 705),
@@ -458,6 +392,7 @@ SECRET_PET_POSITIONS = {
     3: (340, 640),
 }
 
+# Spēlētāja vienība: uzbrukums, līmenis un implanti.
 class Tower:
     def __init__(self, x, y, t_type):
         self.x, self.y = x, y
@@ -473,6 +408,7 @@ class Tower:
     def apply_level_stats(self):
         damage, attack_range, fire_rate, _ = UNIT_STATS[self.type]["levels"][self.level - 1]
         pet = PET_DATA.get(active_pet, {"range": 1.0, "speed": 1.0, "damage": 1.0})
+        # Prasmes, implanti un pets reizina bāzes parametrus.
         self.damage = int(damage * (1 + skills["damage"] * 0.10) * (1 + self.implants["pistol"] * 0.10) * pet["damage"])
         self.range = int((attack_range + skills["range"] * 10) * (1 + self.implants["eye"] * 0.10) * pet["range"])
         self.fire_rate = max(4, int(fire_rate / (GAME_SPEED * (1 + skills["fire_rate"] * 0.10) * (1 + self.implants["arm"] * 0.05) * pet["speed"])))
@@ -520,9 +456,7 @@ class Tower:
         else:
             pygame.draw.circle(surface, (18, 18, 30), (self.x, self.y), 17)
             pygame.draw.circle(surface, color, (self.x, self.y), 17, 3)
-        level_text = font_ui.render(f"L{self.level}", True, WHITE)
-        surface.blit(level_text, level_text.get_rect(center=(self.x, self.y)))
-
+# Pretinieks ar veselību, ātrumu un bojājumu.
 class Enemy:
     def __init__(self, kind="basic"):
         self.x, self.y = path[0]
@@ -542,6 +476,7 @@ class Enemy:
         self.max_health = self.health
         self.speed = speed * mode["speed"] * GAME_SPEED
 
+# Lode lido izvēlētā mērķa virzienā.
 class Bullet:
     def __init__(self, x, y, target, damage, owner, angle_offset=0):
         self.x = x
@@ -553,6 +488,7 @@ class Bullet:
         self.vx = math.cos(angle) * self.speed
         self.vy = math.sin(angle) * self.speed
 
+# Implanti nokrīt un aizlido pie vienības.
 class Implant:
     """Vispirms nokrīt pie uzvarētā pretinieka, tad aizlido pie šāvēja."""
     def __init__(self, kind, x, y, target):
@@ -587,6 +523,7 @@ class Implant:
         else:
             pygame.draw.circle(surface, IMPLANT_COLORS[self.kind], (int(self.x), int(self.y)), 8)
 
+# Klikšķināms pet, kas sāk slepeno uzdevumu.
 class SecretPet:
     """Mazs, klikšķināms slepenais pet konkrētajai kartei."""
     def __init__(self, kind, x, y):
@@ -602,6 +539,7 @@ class SecretPet:
         else:
             pygame.draw.circle(surface, YELLOW, (self.x, self.y), 15)
 
+# Sāk atrastā pet uzdevumu.
 def start_pet_quest():
     """Uzklikšķinot uz pet, parāda tā unikālo questu."""
     global pet_quest_active, pet_quest_progress, status_message, status_timer
@@ -616,6 +554,7 @@ def start_pet_quest():
     status_message = f"SECRET QUEST: {pet['quest_text']}"
     status_timer = 180
 
+# Piešķir pet bonusu visām vienībām.
 def collect_secret_pet():
     """Aktivizē pet buffu visām esošajām vienībām un arī nākamajām."""
     global active_pet, secret_pet, pet_quest_active, status_message, status_timer
@@ -630,6 +569,7 @@ def collect_secret_pet():
     secret_pet = None
     pet_quest_active = None
 
+# Atjauno uzdevuma progresu.
 def advance_pet_quest(action, amount=1):
     """Pieskaita progresu tikai aktīvā pet atbilstošajam questam."""
     global pet_quest_progress
@@ -642,14 +582,17 @@ def advance_pet_quest(action, amount=1):
     if pet_quest_progress >= pet["quest_target"]:
         collect_secret_pet()
 
+# Nejauši piešķir uzvarētā pretinieka implantu.
 def try_drop_implant(enemy, owner):
     """5% iespēja nomest implantu, nepārsniedzot 10 implantus vienībai."""
     if not owner or random.random() >= 0.05:
         return
+    # Ieskaita arī ceļā esošos implantus, lai limits netiktu pārsniegts.
     pending = sum(implant.target is owner for implant in implants)
     if sum(owner.implants.values()) + pending < MAX_IMPLANTS_PER_UNIT:
         implants.append(Implant(random.choice(("pistol", "arm", "eye")), enemy.x, enemy.y, owner))
 
+# Hakeri nopelna papildu kredītus.
 def pay_hacker_income(phase):
     global money, floating_texts
     for tower in towers:
@@ -658,6 +601,7 @@ def pay_hacker_income(phase):
             money += amount
             floating_texts.append([tower.x, tower.y - 48, f"+${amount}", 90])
 
+# Sūta HTTP pieprasījumu uz spēles serveri.
 def api_request(method, endpoint, payload=None, token=None):
     """Nosūta pieprasījumu uz lokālo FastAPI serveri."""
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
@@ -676,12 +620,15 @@ def api_request(method, endpoint, payload=None, token=None):
     except (urllib.error.URLError, TimeoutError):
         return 0, {"detail": "Serveris nav palaists"}
 
+# Droši sajauc paroli pirms saglabāšanas.
 def password_hash(password, salt=None):
     """Parolei datubāzē glabājas PBKDF2 hash, nevis pats paroles teksts."""
     salt = salt or os.urandom(16).hex()
+    # Sāls un atkārtojumi apgrūtina paroles minēšanu no datubāzes noplūdes.
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), 180000).hex()
     return f"{salt}${digest}"
 
+# Pārbauda ievadīto paroli.
 def password_matches(password, stored_hash):
     try:
         salt, _ = stored_hash.split("$", 1)
@@ -689,6 +636,7 @@ def password_matches(password, stored_hash):
     except (ValueError, TypeError):
         return False
 
+# Pieslēdz profilu lokālajā datubāzē.
 def local_login(name, password):
     """Atver vai izveido ar paroli aizsargātu profilu vietējā game.db failā."""
     with local_db_connection() as conn:
@@ -701,6 +649,7 @@ def local_login(name, password):
             return False
     return True
 
+# Nolasa saglabāto progresu no SQLite.
 def local_load_progress():
     with local_db_connection() as conn:
         row = conn.execute(
@@ -711,6 +660,7 @@ def local_load_progress():
         return {"max_unlocked_map": 1, "skill_points": 2, "skills": {}, "infinite_unlocked": False}
     return {"max_unlocked_map": row[0], "skill_points": row[1], "skills": json.loads(row[2]), "infinite_unlocked": bool(row[3])}
 
+# Saglabā progresu lokālajā datubāzē.
 def local_save_progress():
     with local_db_connection() as conn:
         conn.execute(
@@ -724,12 +674,14 @@ def local_save_progress():
             (player_name, max_unlocked_map, skill_points, json.dumps(skills), int(infinite_unlocked)),
         )
 
+# Saglabā labāko sasniegto vilni.
 def local_save_score(wave):
     with local_db_connection() as conn:
         best = conn.execute("SELECT MAX(score) FROM scores WHERE player = ?", (player_name,)).fetchone()[0]
         if best is None or wave > best:
             conn.execute("INSERT INTO scores (player, score) VALUES (?, ?)", (player_name, wave))
 
+# Mēģina pieslēgties serverim vai lokāli.
 def login_account():
     global api_token, player_name, account_message, local_database_mode
     name = account_name_buffer.strip()
@@ -762,6 +714,47 @@ def login_account():
         account_message = f"Pieslēdzies kā {player_name}. Progress saglabājas game.db."
         return True
 
+# Apstrādā vārda un paroles ievadi.
+def handle_account_input(event):
+    global account_name_buffer, account_password_buffer, name_buffer, password_buffer
+    global account_field, game_state
+    is_name_entry = game_state == "NAME_ENTRY"
+
+    if event.key == pygame.K_RETURN:
+        if is_name_entry:
+            account_name_buffer = name_buffer.strip()
+            account_password_buffer = password_buffer
+        if login_account():
+            game_state = "MENU"
+    elif event.key == pygame.K_TAB:
+        account_field = "password" if account_field == "name" else "name"
+    else:
+        is_password = account_field == "password"
+        value = (
+            password_buffer if is_name_entry else account_password_buffer
+        ) if is_password else (
+            name_buffer if is_name_entry else account_name_buffer
+        )
+        limit = 32 if is_password else 16
+
+        if event.key == pygame.K_BACKSPACE:
+            value = value[:-1]
+        elif event.unicode.isprintable() and len(value) < limit:
+            value += event.unicode
+        else:
+            return
+
+        # Saglabā izmaiņas tajā pašā laukā, ko lietotājs rediģē.
+        if is_password and is_name_entry:
+            password_buffer = value
+        elif is_password:
+            account_password_buffer = value
+        elif is_name_entry:
+            name_buffer = value
+        else:
+            account_name_buffer = value
+
+# Ielādē rezultātus no servera vai lokāli.
 def load_online_leaderboard():
     global leaderboard
     status, data = api_request("GET", "/scores/top")
@@ -776,6 +769,7 @@ def load_online_leaderboard():
     leaderboard = [(name, wave) for name, wave in rows]
     return bool(rows)
 
+# Saglabā spēlētāja kartes un prasmju progresu.
 def save_player_progress():
     """Saglabā kartes un Skill Tree progresu pieteiktajam spēlētājam."""
     if not api_token:
@@ -792,6 +786,7 @@ def save_player_progress():
     if status == 0:
         local_save_progress()
 
+# Atjauno progresu pēc pieslēgšanās.
 def load_player_progress():
     """Atjauno iepriekš saglabāto progresu pēc pieteikšanās ar to pašu kontu."""
     global max_unlocked_map, skill_points, infinite_unlocked, leaderboard_unlocked
@@ -799,6 +794,7 @@ def load_player_progress():
         data = local_load_progress()
     else:
         status, data = api_request("GET", "/progress/me", token=api_token)
+        # Ja API nav pieejams, ielādē lokālo kopiju.
         if status != 200:
             data = local_load_progress()
     max_unlocked_map = data["max_unlocked_map"]
@@ -811,6 +807,7 @@ def load_player_progress():
         if skill_name in skills:
             skills[skill_name] = level
 
+# Reģistrē Infinite Mode labāko vilni.
 def record_infinite_result():
     """Saglabā tikai katra spēlētāja augstāko Infinite Mode vilni."""
     global leaderboard
@@ -827,14 +824,33 @@ def record_infinite_result():
             if status == 0:
                 local_save_score(reached_wave)
 
+# Nosaka pretinieku skaitu vilnī.
 def enemies_for_wave(level, wave, is_infinite):
     """Nosaka viļņa izmēru, saglabājot Infinite Mode ātru arī augstos viļņos."""
     if level == 3 and (wave == 20 or (is_infinite and wave % 20 == 0)):
         return 1
     return 4 + min(wave, 18)
 
+# Pārdod tuvumā esošo vienību par pusi cenas.
+def sell_tower_at(x, y):
+    global money, status_message, status_timer
+    tower = next((tower for tower in towers if math.hypot(tower.x - x, tower.y - y) < 32), None)
+    if tower is None:
+        return False
+    spent = UNIT_STATS[tower.type]["cost"] + sum(
+        UNIT_STATS[tower.type]["levels"][level - 1][3]
+        for level in range(2, tower.level + 1)
+    )
+    refund = spent // 2
+    money += refund
+    towers.remove(tower)
+    status_message, status_timer = f"Vienība pārdota: +${refund}", 120
+    return True
+
+# Atiestata spēles objektus un sāk karti.
 def start_level(lvl, is_infinite=False):
     global current_level, path, lives, money, towers, enemies, bullets, implants, active_pet, secret_pet, pet_quest_active, pet_quest_progress, spawn_timer, current_wave, max_waves, enemies_spawned_in_wave, enemies_to_spawn, floating_texts, wave_start_paid, infinite_mode, wave_transition_start, game_over_recorded
+    # Sākot līmeni, notīra iepriekšējās spēles objektus un uzstāda sākuma resursus.
     current_level = lvl
     infinite_mode = is_infinite
     path = LEVEL_PATHS[lvl]
@@ -911,6 +927,8 @@ btn_account_back = Button(center_x, 550, btn_w, btn_h, "ATPAKAĻ", font_btn)
 
 running = True
 
+# Katrs kadrs apstrādā ievadi, atjauno spēli un uzzīmē aktīvo ekrānu.
+# Galvenais cikls: ievade, loģika un attēlošana.
 while running:
     mouse_pos = pygame.mouse.get_pos()
     mouse_clicked = False
@@ -950,51 +968,9 @@ while running:
                             t.upgrade()
                             break
                 elif event.key == pygame.K_q:
-                    mx, my = mouse_pos
-                    for tower in towers[:]:
-                        if math.hypot(tower.x - mx, tower.y - my) < 32:
-                            spent = UNIT_STATS[tower.type]["cost"]
-                            for upgraded_level in range(2, tower.level + 1):
-                                spent += UNIT_STATS[tower.type]["levels"][upgraded_level - 1][3]
-                            refund = spent // 2
-                            money += refund
-                            towers.remove(tower)
-                            status_message, status_timer = f"Vienība pārdota: +${refund}", 120
-                            break
-            elif game_state == "NAME_ENTRY":
-                if event.key == pygame.K_RETURN:
-                    account_name_buffer = name_buffer.strip()
-                    account_password_buffer = password_buffer
-                    if login_account():
-                        game_state = "MENU"
-                elif event.key == pygame.K_TAB:
-                    account_field = "password" if account_field == "name" else "name"
-                elif event.key == pygame.K_BACKSPACE:
-                    if account_field == "password":
-                        password_buffer = password_buffer[:-1]
-                    else:
-                        name_buffer = name_buffer[:-1]
-                elif event.unicode.isprintable():
-                    if account_field == "password" and len(password_buffer) < 32:
-                        password_buffer += event.unicode
-                    elif account_field == "name" and len(name_buffer) < 16:
-                        name_buffer += event.unicode
-            elif game_state == "ACCOUNT":
-                if event.key == pygame.K_RETURN:
-                    if login_account():
-                        game_state = "MENU"
-                elif event.key == pygame.K_TAB:
-                    account_field = "password" if account_field == "name" else "name"
-                elif event.key == pygame.K_BACKSPACE:
-                    if account_field == "password":
-                        account_password_buffer = account_password_buffer[:-1]
-                    else:
-                        account_name_buffer = account_name_buffer[:-1]
-                elif event.unicode.isprintable():
-                    if account_field == "password" and len(account_password_buffer) < 32:
-                        account_password_buffer += event.unicode
-                    elif account_field == "name" and len(account_name_buffer) < 16:
-                        account_name_buffer += event.unicode
+                    sell_tower_at(*mouse_pos)
+            elif game_state in ("NAME_ENTRY", "ACCOUNT"):
+                handle_account_input(event)
             elif game_state == "VICTORY" and event.key == pygame.K_l and leaderboard_unlocked:
                 load_online_leaderboard()
                 game_state = "LEADERBOARD"
@@ -1006,6 +982,7 @@ while running:
                 elif event.key in (pygame.K_UP, pygame.K_PAGEUP):
                     leaderboard_page = max(0, leaderboard_page - 1)
 
+# Galvenā izvēlne.
     if game_state == "MENU":
         screen.fill(BG_COLOR)
         title_surf = font_title.render("CYBER TOWER DEFENSE", True, CYAN)
@@ -1046,6 +1023,7 @@ while running:
         if btn_skills.is_clicked(mouse_pos, mouse_clicked):
             game_state = "SKILLS"
 
+# Konta pieslēgšanās ekrāns.
     elif game_state == "ACCOUNT":
         screen.fill(BG_COLOR)
         title_surf = font_title.render("KONTS", True, CYAN)
@@ -1068,6 +1046,7 @@ while running:
         if btn_account_back.is_clicked(mouse_pos, mouse_clicked):
             game_state = "MENU"
 
+# Kartes izvēles ekrāns.
     elif game_state == "LEVEL_SELECT":
         screen.fill(BG_COLOR)
         title_surf = font_title.render("IZVĒLIES LĪMENI", True, CYAN)
@@ -1097,6 +1076,7 @@ while running:
         if btn_back.is_clicked(mouse_pos, mouse_clicked):
             game_state = "MENU"
 
+# Spēles iestatījumi.
     elif game_state == "SETTINGS":
         screen.fill(BG_COLOR)
         title_surf = font_title.render("IESTATĪJUMI", True, CYAN)
@@ -1117,6 +1097,7 @@ while running:
         if btn_settings_back.is_clicked(mouse_pos, mouse_clicked):
             game_state = "MENU"
 
+# Sākotnējā profila izveide.
     elif game_state == "NAME_ENTRY":
         screen.fill(BG_COLOR)
         title_surf = font_title.render("IZVEIDO / ATVĒR PROFILU", True, CYAN)
@@ -1133,6 +1114,7 @@ while running:
         if account_message:
             screen.blit(message_surf, message_surf.get_rect(center=(WIDTH // 2, 455)))
 
+# Prasmju uzlabošanas izvēlne.
     elif game_state == "SKILLS":
         screen.fill(BG_COLOR)
         title_surf = font_title.render("SKILL TREE", True, CYAN)
@@ -1144,8 +1126,7 @@ while running:
         for skill_name, button in skill_buttons.items():
             button.text = f"{SKILL_INFO[skill_name]}  ({skills[skill_name]}/{SKILL_MAX[skill_name]})"
             button.draw(screen, mouse_pos)
-        for button in (btn_skills_back,):
-            button.draw(screen, mouse_pos)
+        btn_skills_back.draw(screen, mouse_pos)
         selected_skill = None
         for skill_name, button in skill_buttons.items():
             if button.is_clicked(mouse_pos, mouse_clicked):
@@ -1158,6 +1139,7 @@ while running:
         if btn_skills_back.is_clicked(mouse_pos, mouse_clicked):
             game_state = "MENU"
 
+# Infinite Mode rezultātu tabula.
     elif game_state == "LEADERBOARD":
         screen.fill(BG_COLOR)
         title_surf = font_title.render("LEADERBOARD", True, GREEN)
@@ -1181,6 +1163,7 @@ while running:
         if btn_board_back.is_clicked(mouse_pos, mouse_clicked):
             game_state = "MENU"
 
+# Galvenā spēle un viļņu vadība.
     elif game_state == "GAME":
         current_map_image = MAP_IMAGES.get(current_level)
         if current_map_image:
@@ -1213,17 +1196,7 @@ while running:
                     status_message, status_timer = f"Vajag ${cost}", 120
 
         if mouse_right_clicked:
-            mx, my = mouse_pos
-            for tower in towers[:]:
-                if math.hypot(tower.x - mx, tower.y - my) < 32:
-                    spent = UNIT_STATS[tower.type]["cost"]
-                    for upgraded_level in range(2, tower.level + 1):
-                        spent += UNIT_STATS[tower.type]["levels"][upgraded_level - 1][3]
-                    refund = spent // 2
-                    money += refund
-                    towers.remove(tower)
-                    status_message, status_timer = f"Vienība pārdota: +${refund}", 120
-                    break
+            sell_tower_at(*mouse_pos)
 
         if lives > 0:
             spawn_timer += GAME_SPEED
@@ -1245,6 +1218,7 @@ while running:
                 spawn_timer = 0
 
             if enemies_spawned_in_wave >= enemies_to_spawn:
+                # Dod spēlētājam īsu pauzi starp viļņiem, arī ja pretinieki vēl palikuši.
                 if wave_transition_start is None:
                     wave_transition_start = pygame.time.get_ticks()
                 if not enemies or pygame.time.get_ticks() - wave_transition_start >= int(10000 / GAME_SPEED):
@@ -1253,7 +1227,7 @@ while running:
                         current_wave += 1
                         enemies_spawned_in_wave = 0
                         enemies_to_spawn = enemies_for_wave(current_level, current_wave, infinite_mode)
-                        money += int(45 * GAME_MODES[current_level]["reward"])
+                        money += int(50 * GAME_MODES[current_level]["reward"])
                         wave_start_paid = False
                         wave_transition_start = None
                     else:
@@ -1288,6 +1262,7 @@ while running:
             for t in towers:
                 if t.type == 3:
                     continue
+                # Tornis šauj uz pirmo pretinieku, kas atrodas tā darbības rādiusā.
                 target = next((enemy for enemy in enemies if math.hypot(t.x - enemy.x, t.y - enemy.y) <= t.range), None)
                 if target:
                     t.aim_angle = -math.degrees(math.atan2(target.y - t.y, target.x - t.x))
@@ -1319,7 +1294,7 @@ while running:
                     hit_enemy.health -= b.damage
                     advance_pet_quest("damage", b.damage)
                     if hit_enemy.health <= 0:
-                        reward = 250 if hit_enemy.kind == "final_boss" else (100 if hit_enemy.is_boss else 20)
+                        reward = 20 if hit_enemy.kind == "final_boss" else (10 if hit_enemy.is_boss else 5)
                         money += int(reward * GAME_MODES[current_level]["reward"])
                         try_drop_implant(hit_enemy, b.owner)
                         advance_pet_quest("kills")
@@ -1429,6 +1404,7 @@ while running:
             screen.blit(over_surf, over_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 20)))
             screen.blit(sub_surf, sub_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 35)))
 
+# Uzvaras ekrāns un progresa saglabāšana.
     elif game_state == "VICTORY":
         screen.fill(BG_COLOR)
         win_surf = font_title.render("APSVEICUMI - BOSS UZVARĒTS!", True, GREEN)

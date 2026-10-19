@@ -1404,7 +1404,7 @@ while running:
             screen.blit(over_surf, over_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 20)))
             screen.blit(sub_surf, sub_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 35)))
 
-# Uzvaras ekrāns un progresa saglabāšana.
+# Uzvaras ekrāns un progresa saglabāšana
     elif game_state == "VICTORY":
         screen.fill(BG_COLOR)
         win_surf = font_title.render("APSVEICUMI - BOSS UZVARĒTS!", True, GREEN)
